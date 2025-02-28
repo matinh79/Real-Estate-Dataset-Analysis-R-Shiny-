@@ -1,0 +1,546 @@
+---
+title: "Project 2- Real Estate Dataset Analysis"
+author: "Matin Haghighi"
+date: "2024-12-13"
+output: html_document
+runtime: shiny
+---
+
+```{r}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+# Introduction
+
+This project is called the **Real Estate Dataset Analysis**!I started a new project with a new dataset as my previous project did not contain any columns or variables that had location data. This page is designed to explore and analyze a comprehensive real estate dataset. The goal is to provide insights into property prices, sizes, geographical trends, and other key metrics through interactive visualizations and summary statistics.
+
+This page includes interactive Shiny apps that allow users to dive deeper into the data. By selecting variables of interest or specific options, users can generate custom plots and summaries that address the following research questions: - **What is the relationship between price and house size across states?** - **How does price vary by city or state?** - **What geographical patterns can we observe in the dataset?**
+
+```{r}
+library(tidyverse)  
+library(DT)
+library(ggplot2)
+library(naniar)
+library(maps)
+library(shiny)
+library(dplyr)
+```
+
+#Data processing and Preparation
+
+```{r}
+real_estate_data <- read.csv("realtor-data.csv")
+str(real_estate_data)
+head(real_estate_data)
+```
+
+```{r}
+colSums(is.na(real_estate_data))
+```
+
+```{r}
+summary(real_estate_data[, c("price", "bed", "bath", "acre_lot", "house_size")])
+```
+
+```{r}
+real_estate_cleaned <- real_estate_data %>%
+  filter(!is.na(price) & !is.na(bed) & !is.na(bath) & !is.na(acre_lot) & !is.na(house_size))
+
+summary(real_estate_cleaned)
+colSums(is.na(real_estate_cleaned))
+```
+
+```{r}
+state_summary <- real_estate_cleaned %>%
+  group_by(state) %>%
+  summarize(
+    avg_price = mean(price, na.rm = TRUE),
+    median_size = median(house_size, na.rm = TRUE),
+    num_listings = n()
+  ) %>%
+  arrange(desc(avg_price))
+
+head(state_summary)
+```
+
+# Interactive Apps
+
+Below is an explanation of each interactive app included on this page:
+
+## **Dataset Overview App**
+
+**What it does**: This app provides a statistical summary of selected variables. Users can choose a variable from the dropdown menu and view a summary of its data: - For numeric variables, it displays measures such as mean, median, and range. - For categorical variables, it displays the frequency of each category.
+
+**How to use it**: 1. Select a variable from the dropdown menu. 2. Click the "Update Summary" button to view the summary statistics.
+
+```{r}
+ui <- fluidPage(
+  titlePanel("Real Estate Dataset Overview"),
+  sidebarLayout(
+    sidebarPanel(
+      h4("Select Variables for Summary"),
+      selectInput(
+        inputId = "variable",
+        label = "Choose a Variable:",
+        choices = names(real_estate_data),
+        selected = "price"
+      ),
+      actionButton("update", "Update Summary"),
+      helpText("Select a variable and click 'Update Summary' to view its statistics.")
+    ),
+    mainPanel(
+      tabsetPanel(
+        tabPanel(
+          "Summary Statistics",
+          h4("Summary Statistics"),
+          uiOutput("summary_ui") # Dynamically render summary output
+        ),
+        tabPanel(
+          "Data Table",
+          h4("Data Table"),
+          DTOutput("data_table") # Render data table
+        )
+      )
+    )
+  )
+)
+
+server <- function(input, output) {
+  observeEvent(input$update, {
+    output$summary_ui <- renderUI({
+      variable <- real_estate_data[[input$variable]]
+      
+      if (is.numeric(variable)) {
+        # Render numerical summary as text
+        verbatimTextOutput("numeric_summary")
+      } else if (is.factor(variable) || is.character(variable)) {
+        # Render categorical summary as a table
+        tableOutput("categorical_summary")
+      } else {
+        # Unsupported variable type
+        h4("Unsupported variable type")
+      }
+    })
+    
+    output$numeric_summary <- renderPrint({
+      summary(real_estate_data[[input$variable]])
+    })
+    
+    output$categorical_summary <- renderTable({
+      variable <- real_estate_data[[input$variable]]
+      freq_table <- as.data.frame(table(variable))
+      colnames(freq_table) <- c("Category", "Frequency")
+      freq_table
+    })
+  })
+  
+  output$data_table <- renderDT({
+    datatable(real_estate_data, options = list(pageLength = 10))
+  })
+}
+
+shinyApp(ui = ui, server = server)
+```
+
+**State Comparison App**
+
+**What it does**: This app compares average property prices across selected states using a bar chart. Users can select multiple states using checkboxes and view how the average prices differ among them.
+
+**How to use it**: 1. Check the boxes next to the states you want to compare. 2. Click the "Update Chart" button to view the bar chart.
+
+```{r}
+ui <- fluidPage(
+  titlePanel("Compare Average Property Prices Across States"),
+  sidebarLayout(
+    sidebarPanel(
+      h4("Select States to Compare"),
+      checkboxGroupInput(
+        inputId = "selected_states",
+        label = "Choose States:",
+        choices = unique(real_estate_data$state),
+        selected = unique(real_estate_data$state)[1:5]
+      ),
+      actionButton("update_chart", "Update Chart"),
+      helpText("Select states and click 'Update Chart' to compare average prices.")
+    ),
+    mainPanel(
+      h4("Average Prices by State"),
+      plotOutput("state_avg_price_chart")
+    )
+  )
+)
+
+server <- function(input, output) {
+  observeEvent(input$update_chart, {
+    output$state_avg_price_chart <- renderPlot({
+      # Filter data for selected states
+      filtered_data <- real_estate_data %>%
+        filter(state %in% input$selected_states)
+      
+      # Calculate average price for each selected state
+      state_avg <- filtered_data %>%
+        group_by(state) %>%
+        summarise(avg_price = mean(price, na.rm = TRUE)) %>%
+        arrange(desc(avg_price))
+      
+      # Create bar chart
+      ggplot(state_avg, aes(x = reorder(state, avg_price), y = avg_price, fill = state)) +
+        geom_bar(stat = "identity") +
+        coord_flip() +
+        labs(
+          x = "State",
+          y = "Average Price (USD)",
+          title = "Average Property Prices by Selected States"
+        ) +
+        theme_minimal()
+    })
+  })
+}
+
+shinyApp(ui = ui, server = server)
+```
+
+## **Scatterplot Exploration App**
+
+**What it does**: This app allows users to explore the relationships between different variables using scatterplots. Users can select the x-axis and y-axis variables, and optionally apply a log scale for better visualization of large data ranges.
+
+**How to use it**: 1. Select variables for the x-axis and y-axis. 2. Check the "Apply Log Scale" box if needed. 3. Click "Update Plot" to see the scatterplot.
+
+```{r}
+ui <- fluidPage(
+  titlePanel("Relationship Between Price and House Size Across States"),
+  sidebarLayout(
+    sidebarPanel(
+      h4("Select State and Options"),
+      selectInput(
+        inputId = "state",
+        label = "Choose a State:",
+        choices = unique(real_estate_data$state),
+        selected = unique(real_estate_data$state)[1]
+      ),
+      checkboxInput(
+        inputId = "log_scale",
+        label = "Apply Log Scale to Axes",
+        value = FALSE
+      ),
+      actionButton("update", "Update Plot")
+    ),
+    mainPanel(
+      plotOutput("scatterplot")
+    )
+  )
+)
+
+server <- function(input, output) {
+  observeEvent(input$update, {
+    output$scatterplot <- renderPlot({
+      filtered_data <- real_estate_data[real_estate_data$state == input$state, ]
+
+      if (input$log_scale) {
+        plot(
+          log(filtered_data$house_size),
+          log(filtered_data$price),
+          xlab = "Log-Scaled House Size",
+          ylab = "Log-Scaled Price",
+          main = paste("Scatterplot of Price vs House Size in", input$state),
+          col = "blue",
+          pch = 16
+        )
+      } else {
+        plot(
+          filtered_data$house_size,
+          filtered_data$price,
+          xlab = "House Size (sq ft)",
+          ylab = "Price (USD)",
+          main = paste("Scatterplot of Price vs House Size in", input$state),
+          col = "blue",
+          pch = 16
+        )
+      }
+    })
+  })
+}
+
+shinyApp(ui = ui, server = server)
+```
+
+## **Geospatial Map App**
+
+**What it does**: This app displays a geospatial map of average property prices by state. Users can explore geographical trends in property prices and identify patterns across regions.
+
+**How to use it**: 1. Click the "Update Map" button to view the geospatial visualization. 2. Hover over states to see their respective average prices.
+
+```{r}
+geo_summary <- real_estate_cleaned %>%
+  group_by(state) %>%
+  summarize(avg_price = mean(price, na.rm = TRUE)) %>%
+  mutate(state = tolower(state))
+
+us_map <- map_data("state")
+
+geo_data <- us_map %>%
+  left_join(geo_summary, by = c("region" = "state"))
+
+ui <- fluidPage(
+  titlePanel("Interactive Geospatial Map"),
+  sidebarLayout(
+    sidebarPanel(
+      checkboxInput("show_na", "Show states with no data", value = TRUE),
+      sliderInput(
+        "price_range",
+        "Filter by Average Price:",
+        min = min(geo_summary$avg_price, na.rm = TRUE),
+        max = max(geo_summary$avg_price, na.rm = TRUE),
+        value = range(geo_summary$avg_price, na.rm = TRUE)
+      )
+    ),
+    mainPanel(
+      plotOutput("geo_map")
+    )
+  )
+)
+
+server <- function(input, output) {
+  output$geo_map <- renderPlot({
+    filtered_data <- geo_summary %>%
+      filter(avg_price >= input$price_range[1] & avg_price <= input$price_range[2])
+    
+    map_data <- us_map %>%
+      left_join(filtered_data, by = c("region" = "state"))
+    
+    ggplot(map_data, aes(long, lat, group = group, fill = avg_price)) +
+      geom_polygon(color = "white") +
+      scale_fill_gradient(
+        low = "lightblue",
+        high = "darkblue",
+        na.value = if (input$show_na) "grey50" else NA
+      ) +
+      labs(
+        title = "Interactive Geospatial Map: Average Property Prices",
+        fill = "Avg Price (USD)",
+        x = "",
+        y = ""
+      ) +
+      theme_minimal() +
+      theme(
+        axis.text = element_blank(),
+        axis.ticks = element_blank(),
+        panel.grid = element_blank()
+      )
+  })
+}
+
+shinyApp(ui = ui, server = server)
+```
+
+#EDA
+
+```{r}
+ggplot(state_summary, aes(x = reorder(state, -avg_price), y = avg_price)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  labs(title = "Average Price by State", x = "State", y = "Average Price") +
+  theme_minimal() +
+  coord_flip()
+```
+
+```{r}
+gg_miss_var(real_estate_cleaned) +
+  labs(
+    title = "Missing Data Visualization",
+    subtitle = "Overview of missing values across variables"
+  )
+```
+
+```{r}
+ggplot(real_estate_cleaned, aes(x = price)) +
+  geom_histogram(binwidth = 50000, fill = "blue", color = "white") +
+  scale_x_continuous(limits = c(0, 1000000), labels = scales::comma) +
+  labs(
+    title = "Distribution of Property Prices",
+    x = "Price (USD)",
+    y = "Frequency"
+  ) +
+  theme_minimal()
+
+ggplot(real_estate_cleaned, aes(x = house_size, y = acre_lot)) +
+  geom_point(color = "darkgreen", alpha = 0.5) +
+  scale_x_continuous(limits = c(0, 10000), labels = scales::comma) +
+  scale_y_continuous(limits = c(0, 100)) +
+  labs(
+    title = "Scatterplot of House Size vs Lot Size",
+    x = "House Size (sq ft)",
+    y = "Lot Size (acre)"
+  ) +
+  theme_minimal()
+
+ggplot(real_estate_cleaned, aes(x = house_size, y = acre_lot)) +
+  geom_point(color = "darkgreen", alpha = 0.5) +
+  scale_x_continuous(limits = c(0, 5000)) +  # Adjusting the scale
+  labs(
+    title = "Scatterplot of House Size vs Lot Size",
+    x = "House Size (sq ft)",
+    y = "Lot Size (acre)"
+  ) +
+  theme_minimal()
+```
+
+```{r}
+state_summary <- real_estate_cleaned %>%
+  group_by(state) %>%
+  summarize(
+    avg_price = mean(price, na.rm = TRUE),
+    avg_size = mean(house_size, na.rm = TRUE)
+  )
+
+ggplot(data = state_summary, aes(x = avg_size, y = avg_price)) +
+  geom_point(size = 3, color = "blue") +
+  labs(
+    title = "Average Price vs. Average House Size by State",
+    x = "Average House Size (sq ft)",
+    y = "Average Price (USD)"
+  ) +
+  theme_minimal()
+
+selected_states <- c("California", "Florida", "Illinois", "New York", "Texas")
+filtered_data <- real_estate_cleaned %>% filter(state %in% selected_states)
+
+ggplot(filtered_data, aes(x = house_size, y = price)) +
+  geom_point(color = "blue", alpha = 0.5) +
+  facet_wrap(~state, scales = "free") +
+  scale_x_continuous(labels = scales::comma) +
+  scale_y_continuous(labels = scales::comma) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    strip.text = element_text(size = 10, face = "bold")
+  ) +
+  labs(
+    title = "Price vs. House Size in Selected States",
+    x = "House Size (sq ft)",
+    y = "Price (USD)"
+  )
+```
+
+```{r}
+geo_summary <- real_estate_cleaned %>%
+  group_by(state) %>%
+  summarize(avg_price = mean(price, na.rm = TRUE)) %>%
+  mutate(state = tolower(state))
+
+us_map <- map_data("state")
+
+geo_data <- us_map %>%
+  left_join(geo_summary, by = c("region" = "state"))
+
+ggplot(geo_data, aes(long, lat, group = group, fill = avg_price)) +
+  geom_polygon(color = "white") +
+  scale_fill_gradient(low = "lightblue", high = "darkblue", na.value = "grey50") +
+  labs(
+    title = "Average Property Prices Across States",
+    fill = "Avg Price (USD)",
+    x = "",
+    y = ""
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text = element_blank(),
+    axis.ticks = element_blank(),
+    panel.grid = element_blank()
+  )
+```
+
+```{r}
+status_summary <- real_estate_cleaned %>%
+  group_by(status) %>%
+  summarize(avg_price = mean(price, na.rm = TRUE))
+
+ggplot(status_summary, aes(x = reorder(status, avg_price), y = avg_price, fill = status)) +
+  geom_bar(stat = "identity", alpha = 0.8) +
+  scale_y_continuous(labels = scales::comma) +
+  labs(
+    title = "Average Property Prices by Status",
+    x = "Property Status",
+    y = "Average Price (USD)"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+```{r}
+filtered_data <- real_estate_cleaned %>%
+  filter(price <= quantile(price, 0.99, na.rm = TRUE), bed <= 10)
+
+ggplot(filtered_data, aes(x = bed, y = price)) +
+  geom_jitter(alpha = 0.5, color = "red") +
+  labs(
+    title = "Distribution of Property Prices by Number of Bedrooms",
+    x = "Number of Bedrooms",
+    y = "Price (USD)"
+  ) +
+  theme_minimal()
+```
+
+```{r}
+ggplot(real_estate_cleaned %>% filter(bed <= 10), aes(x = as.factor(bed), y = price)) +
+  geom_boxplot(fill = "skyblue", color = "black", outlier.color = "red", outlier.size = 1) +
+  scale_y_log10() +
+  labs(
+    title = "Distribution of Property Prices by Number of Bedrooms (Log Scale)",
+    x = "Number of Bedrooms",
+    y = "Price (USD, Log Scale)"
+  ) +
+  theme_minimal()
+```
+
+```{r}
+top_states <- real_estate_cleaned %>%
+  count(state, sort = TRUE) %>%
+  top_n(10, n) %>%
+  pull(state)
+
+filtered_states_data <- real_estate_cleaned %>%
+  filter(state %in% top_states)
+
+ggplot(filtered_states_data, aes(x = state, y = price, fill = state)) +
+  geom_boxplot(outlier.shape = NA) +  # Suppress outliers for readability
+  coord_cartesian(ylim = c(0, quantile(filtered_states_data$price, 0.99, na.rm = TRUE))) +
+  labs(
+    title = "Distribution of Property Prices by State",
+    x = "State",
+    y = "Price (USD)"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+# Summary
+
+we aimed to address the primary questions:
+
+What is the relationship between price and house size across states?
+
+From scatterplots and state comparisons, I observed that there is a general positive correlation between house size and price. However, this relationship varies significantly across states due to regional price differences, amenities, and property demand.
+
+How does price vary by city or state?
+
+The bar chart comparisons and geospatial maps highlighted stark differences in average property prices across states and cities. Wealthier regions or regions with high demand exhibit significantly higher average prices. However, there are outliers where prices don't align with typical trends, which may suggest unique market influences or data irregularities.
+
+What geographical patterns can we observe in the dataset?
+
+The geospatial map clearly showed that coastal and metropolitan states tend to have higher average property prices, while central states often feature more affordable properties. This geographic visualization reinforces the impact of location on property values, driven by proximity to job hubs, amenities, and population density.
+
+# Uncertainty and Limitations
+
+While these findings provide valuable insights, there are areas of uncertainty and limitations that must be acknowledged:
+
+Data Completeness: The dataset contains missing values and lacks granular geographic details like latitude and longitude, limiting the depth of geospatial analysis.
+
+Data Recency: The dataset might not account for recent changes in real estate trends, such as the impact of economic shifts, pandemics, or other external factors affecting property prices.
+
+# Bias and Potential Improvements
+
+Bias:
+
+There may be regional biases in the data, where wealthier areas are overrepresented, skewing average price comparisons. Data collection methods may favor listings from larger real estate firms, potentially missing smaller market segments or rural properties.
+
+Improvements: Incorporate Additional Variables: Including factors like neighborhood quality, proximity to amenities, or crime rates could provide a more nuanced understanding of price drivers.
